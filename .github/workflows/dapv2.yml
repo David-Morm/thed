@@ -1,4 +1,4 @@
-name: Download and str
+name: Download and save to repo
 
 on:
   workflow_dispatch:
@@ -37,8 +37,7 @@ jobs:
       - name: Download the file
         run: |
           HTTP_STATUS=$(curl -L \
-            --silent \
-            --show-error \
+            --progress-bar \
             --write-out "%{http_code}" \
             --output "${{ env.FILENAME }}" \
             --retry 3 \
@@ -54,6 +53,9 @@ jobs:
             exit 1
           fi
 
+          echo "Downloaded successfully (HTTP $HTTP_STATUS)"
+          ls -lh "${{ env.FILENAME }}"
+
       - name: Commit and push to repo
         run: |
           git config user.name "github-actions[bot]"
@@ -67,4 +69,4 @@ jobs:
           fi
 
           git commit -m "chore: add ${{ env.FILENAME }}"
-          git push
+          git push --progress
