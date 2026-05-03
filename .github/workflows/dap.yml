@@ -1,108 +1,40 @@
-name: Download and Push File
+name: Download and save as artifact
 
 on:
-  # Run on a schedule (every day at 02:00 UTC)
-  schedule:
-    - cron: '0 2 * * *'
-  # Allow manual trigger from the Actions tab
   workflow_dispatch:
     inputs:
       download_url:
-        description: 'Direct download URL (overrides the default)'
+        description: 'Direct download URL'
+        required: true
+        type: string
+      filename:
+        description: 'Name to save the file as (optional)'
         required: false
         type: string
 
-# Restrict default token permissions to minimum needed
-permissions:
-  contents: write
-
 jobs:
-  download-and-push:
+  download:
     runs-on: ubuntu-latest
-
-    env:
-      # ── Configure these ────────────────────────────────────────────────────
-      # Default URL used when the workflow is not triggered manually with a URL.
-      DEFAULT_DOWNLOAD_URL: 'https://example.com/path/to/file.zip'
-
-      # Destination path inside the repo (relative to repo root).
-      DEST_PATH: 'downloads/file.zip'
-
-      # Commit author info shown in git log.
-      GIT_USER_NAME: 'github-actions[bot]'
-      GIT_USER_EMAIL: 'github-actions[bot]@users.noreply.github.com'
-      # ── End of configuration ───────────────────────────────────────────────
-
     steps:
-      # ── 1. Check out the repository ────────────────────────────────────────
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          # Use a PAT if you need to trigger downstream workflows on the push,
-          # otherwise the default GITHUB_TOKEN is fine.
-          token: ${{ secrets.GITHUB_TOKEN }}
-          fetch-depth: 1
-
-      # ── 2. Resolve the URL (manual input takes priority) ───────────────────
-      - name: Resolve download URL
-        id: resolve_url
+      - name: Set filename
         run: |
-          if [[ -n "${{ github.event.inputs.download_url }}" ]]; then
-            echo "url=${{ github.event.inputs.download_url }}" >> "$GITHUB_OUTPUT"
+          if [ -z "${{ inputs.filename }}" ]; then
+            # Try to guess filename from URL
+            FILENAME=$(basename "${{ inputs.download_url }}" | cut -d'?' -f1)
+            if [ -z "$FILENAME" ]; then
+              FILENAME="downloaded_file"
+            fi
           else
-            echo "url=$DEFAULT_DOWNLOAD_URL" >> "$GITHUB_OUTPUT"
+            FILENAME="${{ inputs.filename }}"
           fi
+          echo "FILENAME=$FILENAME" >> $GITHUB_ENV
 
-      # ── 3. Create destination directory if it doesn't exist ────────────────
-      - name: Prepare destination directory
-        run: mkdir -p "$(dirname "$DEST_PATH")"
+      - name: Download the file
+        run: curl -L -o "${{ env.FILENAME }}" "${{ inputs.download_url }}"
 
-      # ── 4. Download the file ───────────────────────────────────────────────
-      - name: Download file
-        run: |
-          URL="${{ steps.resolve_url.outputs.url }}"
-          echo "Downloading: $URL"
-
-          HTTP_STATUS=$(curl \
-            --location \
-            --silent \
-            --show-error \
-            --write-out "%{http_code}" \
-            --output "$DEST_PATH" \
-            --retry 3 \
-            --retry-delay 5 \
-            --retry-max-time 60 \
-            --connect-timeout 30 \
-            --max-time 120 \
-            "$URL")
-
-          if [[ "$HTTP_STATUS" -lt 200 || "$HTTP_STATUS" -ge 300 ]]; then
-            echo "::error::Download failed — HTTP status $HTTP_STATUS for $URL"
-            exit 1
-          fi
-
-          if [[ ! -s "$DEST_PATH" ]]; then
-            echo "::error::Downloaded file is empty: $DEST_PATH"
-            exit 1
-          fi
-
-          echo "Downloaded successfully (HTTP $HTTP_STATUS)."
-          ls -lh "$DEST_PATH"
-
-      # ── 5. Commit and push only when the file actually changed ─────────────
-      - name: Commit and push if changed
-        run: |
-          git config user.name  "$GIT_USER_NAME"
-          git config user.email "$GIT_USER_EMAIL"
-
-          git add "$DEST_PATH"
-
-          # Exit gracefully when there is nothing new to commit
-          if git diff --cached --quiet; then
-            echo "No changes detected — skipping commit."
-            exit 0
-          fi
-
-          TIMESTAMP=$(date -u '+%Y-%m-%d %H:%M UTC')
-          git commit -m "chore: update $DEST_PATH [$TIMESTAMP]"
-          git push
+      - name: Upload as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloaded-file
+          path: ${{ env.FILENAME }}
+          retention-days: 90   # file stays on GitHub for 90 days
